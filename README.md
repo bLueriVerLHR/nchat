@@ -1,2 +1,3 @@
-# nchat
-nchat a small chat project written in rust
+# NChat
+
+一个简单的局域网聊天服务器，目前没有做非常多的多线程内容。
