@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::str::from_utf8;
 
 use clap::Parser;
@@ -7,12 +7,9 @@ use nchat::{ControlCode, Message};
 
 #[derive(Parser, Debug)]
 pub struct Args {
-    /// server will listen on 127.0.0.1:<PORT>
-    #[arg(short, long, default_value_t = 8080)]
-    port: u16,
-
-    #[arg(short, long, default_value_t = 4)]
-    ipv: u8,
+    /// server will listen on <LOCAL>
+    #[arg(short, long, default_value_t = SocketAddr::from((Ipv4Addr::LOCALHOST, 8080)))]
+    address: SocketAddr,
 }
 
 pub struct Server {
@@ -22,12 +19,7 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(port: u16, ipv: u8) -> Server {
-        let address = match ipv {
-            4 => SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
-            6 => SocketAddr::from((Ipv6Addr::LOCALHOST, port)),
-            _ => panic!("protocol unknow"),
-        };
+    pub fn new(address: SocketAddr) -> Server {
         let socket = UdpSocket::bind(address).unwrap();
         println!("server will listen on {}", address);
         let mut server = Server {
@@ -126,6 +118,6 @@ impl Server {
 
 fn main() {
     let args = Args::parse();
-    let mut s = Server::new(args.port, args.ipv);
+    let mut s = Server::new(args.address);
     s.listen();
 }

@@ -18,8 +18,8 @@ use nchat::{ControlCode, Group, Member, Message};
 #[derive(Parser, Debug)]
 pub struct Args {
     /// client will use localhost:<PORT> for udp send/receive
-    #[arg(short, long, default_value_t = 9090)]
-    port: u16,
+    #[arg(short, long, default_value_t = SocketAddr::from((Ipv4Addr::LOCALHOST, 9090)))]
+    address: SocketAddr,
 
     /// server address
     #[arg(short, long, default_value_t = SocketAddr::from((Ipv4Addr::LOCALHOST, 8080)))]
@@ -46,11 +46,7 @@ struct Client {
 }
 
 impl Client {
-    pub fn new(nickname: String, port: u16, server: SocketAddr) -> Client {
-        let address = match server.ip() {
-            IpAddr::V4(_) => SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
-            IpAddr::V6(_) => SocketAddr::from((Ipv6Addr::LOCALHOST, port)),
-        };
+    pub fn new(nickname: String, address: SocketAddr, server: SocketAddr) -> Client {
         let socket = UdpSocket::bind(&address).unwrap();
         socket.connect(server).unwrap();
         Client {
@@ -90,7 +86,7 @@ impl Client {
 
 fn main() {
     let args = Args::parse();
-    let mut client = Client::new(args.nickname, args.port, args.server);
+    let mut client = Client::new(args.nickname, args.address, args.server);
     client.try_login(&args.group);
 
     // set mailbox for receiving message from server
