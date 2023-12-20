@@ -17,7 +17,7 @@ use nchat::{ControlCode, Group, Member, Message};
 
 #[derive(Parser, Debug)]
 pub struct Args {
-    /// client will use localhost:<PORT> for udp send/receive
+    /// client will use <ADDRESS> for udp send/receive
     #[arg(short, long, default_value_t = SocketAddr::from((Ipv4Addr::LOCALHOST, 9090)))]
     address: SocketAddr,
 

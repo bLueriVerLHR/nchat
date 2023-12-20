@@ -7,7 +7,7 @@ use nchat::{ControlCode, Message};
 
 #[derive(Parser, Debug)]
 pub struct Args {
-    /// server will listen on <LOCAL>
+    /// server will listen on <ADDRESS>
     #[arg(short, long, default_value_t = SocketAddr::from((Ipv4Addr::LOCALHOST, 8080)))]
     address: SocketAddr,
 }
