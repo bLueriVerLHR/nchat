@@ -1,7 +1,7 @@
 use std::{
-    net::{Ipv4Addr, SocketAddr, UdpSocket},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
     str::from_utf8,
-    sync::mpsc::{channel, Receiver, TryIter},
+    sync::mpsc::{channel, Receiver, Sender},
     thread::{self},
 };
 
@@ -17,7 +17,7 @@ use nchat::{ControlCode, Group, Member, Message};
 
 #[derive(Parser, Debug)]
 pub struct Args {
-    /// client will use 127.0.0.1:<PORT> for udp send/receive
+    /// client will use localhost:<PORT> for udp send/receive
     #[arg(short, long, default_value_t = 9090)]
     port: u16,
 
@@ -34,37 +34,38 @@ pub struct Args {
     nickname: String,
 }
 
+struct InternalMessage {
+    code: ControlCode,
+    msg: String,
+}
+
 struct Client {
     nickname: String,
     group: String,
     socket: UdpSocket,
-    receiver: Receiver<Message>,
 }
 
 impl Client {
-    pub fn new(
-        nickname: String,
-        port: u16,
-        server: SocketAddr,
-        receiver: Receiver<Message>,
-    ) -> Client {
-        let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    pub fn new(nickname: String, port: u16, server: SocketAddr) -> Client {
+        let address = match server.ip() {
+            IpAddr::V4(_) => SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
+            IpAddr::V6(_) => SocketAddr::from((Ipv6Addr::LOCALHOST, port)),
+        };
         let socket = UdpSocket::bind(&address).unwrap();
         socket.connect(server).unwrap();
         Client {
             nickname,
             group: String::new(),
             socket,
-            receiver,
         }
-    }
-
-    pub fn try_iter(&self) -> TryIter<'_, Message> {
-        self.receiver.try_iter()
     }
 
     pub fn clone_socket(&self) -> UdpSocket {
         self.socket.try_clone().unwrap()
+    }
+
+    pub fn current_group(&self) -> &String {
+        &self.group
     }
 
     pub fn get_group(&self) -> Group {
@@ -89,9 +90,11 @@ impl Client {
 
 fn main() {
     let args = Args::parse();
-    let (msg_sender, msg_receiver) = channel();
-    let mut client = Client::new(args.nickname, args.port, args.server, msg_receiver);
+    let mut client = Client::new(args.nickname, args.port, args.server);
     client.try_login(&args.group);
+
+    // set mailbox for receiving message from server
+    let (mail_sender, mail_receiver) = channel();
     let udp = client.clone_socket();
     let _mailbox = thread::spawn(move || loop {
         let mut buf = [0; 4096];
@@ -101,30 +104,47 @@ fn main() {
         } else {
             let raw = from_utf8(&buf[..recv.unwrap()]).unwrap();
             let msg: Message = serde_json::from_str(&raw).unwrap();
-            msg_sender.send(msg).unwrap();
+            mail_sender.send(msg).unwrap();
         }
     });
 
-    let mut siv = cursive::default();
-    add_callbacks(&mut siv, &client);
-    render(&mut siv, &client);
+    // set postman for sending message to server
+    let (post_sender, post_receiver) = channel::<InternalMessage>();
+    let udp = client.clone_socket();
+    let m = client.get_member();
+    let g = client.get_group();
+    let postman = thread::spawn(move || {
+        let mut default = Message::new_default(ControlCode::SendMessage, g, m, String::new());
+        for imsg in post_receiver.iter() {
+            default.set_code(imsg.code);
+            default.set_msg(imsg.msg);
+            let buf = serde_json::to_string(&default).unwrap();
+            udp.send(buf.as_bytes()).unwrap();
+
+            match default.get_code() {
+                ControlCode::LeaveGroup => {
+                    break;
+                }
+                _ => {}
+            }
+        }
+    });
+
+    let mut siv = default_window();
+    render(&mut siv, client.current_group(), post_sender.clone());
     let mut siv = siv.runner();
-    run(&mut siv, &client);
+    run(&mut siv, mail_receiver, post_sender);
+
+    // waiting for leave message sent out
+    postman.join().unwrap();
 }
 
-fn add_callbacks(siv: &mut CursiveRunnable, client: &Client) {
-    let socket = client.clone_socket();
-    let g = client.get_group();
-    let m = client.get_member();
+fn default_window() -> CursiveRunnable {
+    let mut siv = cursive::default();
     siv.add_global_callback(event::Key::Esc, move |s| {
-        let msg = Message::new_default(
-            ControlCode::LeaveGroup,
-            g.clone(),
-            m.clone(),
-            String::from("global"),
-        );
-        let buf = serde_json::to_string(&msg).unwrap();
-        socket.send(buf.as_bytes()).unwrap();
+        s.quit();
+    });
+    siv.add_global_callback(event::Event::CtrlChar('c'), move |s| {
         s.quit();
     });
     siv.add_global_callback(event::Key::Del, |s| {
@@ -133,15 +153,16 @@ fn add_callbacks(siv: &mut CursiveRunnable, client: &Client) {
         })
         .unwrap();
     });
+    siv.add_global_callback(event::Event::Alt(event::Key::Del), |s| {
+        s.call_on_name("chat.history", |v: &mut LinearLayout| {
+            v.clear();
+        })
+        .unwrap();
+    });
+    return siv;
 }
 
-fn render(siv: &mut CursiveRunnable, client: &Client) {
-    let g = client.get_group();
-    let m = client.get_member();
-    let socket = client.clone_socket();
-
-    siv.set_window_title("nchat");
-
+fn render(siv: &mut CursiveRunnable, title: &String, sender: Sender<InternalMessage>) {
     let history = LinearLayout::vertical()
         .with_name("chat.history")
         .full_width()
@@ -150,38 +171,42 @@ fn render(siv: &mut CursiveRunnable, client: &Client) {
 
     let editor = EditView::new()
         .on_submit(move |_s, text| {
-            if text.is_empty() {
-                return;
-            }
-            let msg = Message::new_default(
-                ControlCode::SendMessage,
-                g.clone(),
-                m.clone(),
-                text.to_string(),
-            );
-            let buf = serde_json::to_string(&msg).unwrap();
-            socket.send(buf.as_bytes()).unwrap();
+            let imsg = InternalMessage {
+                code: ControlCode::SendMessage,
+                msg: text.to_string(),
+            };
+            sender.send(imsg).unwrap();
         })
         .with_name("chat.edit")
         .full_width();
 
-    let chat_view =
-        Dialog::around(LinearLayout::vertical().child(history).child(editor)).title("global");
+    let chat_view = Dialog::around(LinearLayout::vertical().child(history).child(editor))
+        .title(title)
+        .with_name("chat.win");
 
-    siv.add_fullscreen_layer(chat_view)
+    siv.add_fullscreen_layer(chat_view);
 }
 
-fn run(siv: &mut CursiveRunner<&mut Cursive>, client: &Client) {
+fn run(
+    siv: &mut CursiveRunner<&mut Cursive>,
+    receiver: Receiver<Message>,
+    sender: Sender<InternalMessage>,
+) {
     let mut msg_cnt: u64 = 0;
     siv.refresh();
     loop {
         siv.step();
         if !siv.is_running() {
+            let imsg = InternalMessage {
+                code: ControlCode::LeaveGroup,
+                msg: String::new(),
+            };
+            sender.send(imsg).unwrap();
             break;
         }
 
         let mut needs_refresh = false;
-        for m in client.try_iter() {
+        for m in receiver.try_iter() {
             let sender = m.get_sender();
             let timestamp = m.get_timestamp();
             let dt = DateTime::from_timestamp(timestamp, 0).unwrap();
@@ -220,10 +245,6 @@ fn run(siv: &mut CursiveRunner<&mut Cursive>, client: &Client) {
             siv.call_on_name("chat.history", |v: &mut LinearLayout| {
                 needs_refresh = true;
                 msg_cnt += 1;
-                // while msg_cnt >= 32 {
-                //     v.remove_child(0);
-                //     msg_cnt -= 1;
-                // }
                 v.add_child(TextView::new(text));
             });
         }
