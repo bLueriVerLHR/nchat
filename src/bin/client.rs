@@ -64,6 +64,10 @@ impl Client {
         &self.group
     }
 
+    pub fn get_address(&self) -> SocketAddr {
+        self.socket.local_addr().unwrap()
+    }
+
     pub fn get_group(&self) -> Group {
         Group::new(self.group.clone(), 0)
     }
@@ -92,7 +96,8 @@ fn main() {
     // set mailbox for receiving message from server
     let (mail_sender, mail_receiver) = channel();
     let udp = client.clone_socket();
-    let _mailbox = thread::spawn(move || loop {
+    let addr = client.get_address();
+    let mailbox = thread::spawn(move || loop {
         let mut buf = [0; 4096];
         let recv = udp.recv(&mut buf);
         if recv.is_err() {
@@ -100,13 +105,26 @@ fn main() {
         } else {
             let raw = from_utf8(&buf[..recv.unwrap()]).unwrap();
             let msg: Message = serde_json::from_str(&raw).unwrap();
+            let exit_server = match msg.get_code() {
+                ControlCode::EixtServer => {
+                    if msg.get_sender().get_address() == &addr {
+                        true
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            };
             mail_sender.send(msg).unwrap();
+            if exit_server {
+                break;
+            }
         }
     });
 
     // render message in the backgroud
     let (view_sender, view_receiver) = channel::<TextView>();
-    let _message_render = thread::spawn(move || {
+    let message_render = thread::spawn(move || {
         for m in mail_receiver.iter() {
             let sender = m.get_sender();
             let timestamp = m.get_timestamp();
@@ -116,6 +134,14 @@ fn main() {
             let text = match m.get_code() {
                 ControlCode::Error => {
                     format!("## server send an error: {}", msg)
+                }
+                ControlCode::EixtServer => {
+                    format!(
+                        "👋 {}@{} has exit the server -- {}",
+                        sender.get_nickname(),
+                        sender.get_address(),
+                        loc_dt,
+                    )
                 }
                 ControlCode::JoinGroup => {
                     format!(
@@ -144,6 +170,15 @@ fn main() {
                 }
             };
             view_sender.send(TextView::new(text)).unwrap();
+
+            match m.get_code() {
+                ControlCode::EixtServer => {
+                    if m.get_sender().get_address() == &addr {
+                        break;
+                    }
+                }
+                _ => {}
+            }
         }
     });
 
@@ -161,7 +196,7 @@ fn main() {
             udp.send(buf.as_bytes()).unwrap();
 
             match default.get_code() {
-                ControlCode::LeaveGroup => {
+                ControlCode::EixtServer => {
                     break;
                 }
                 _ => {}
@@ -176,6 +211,8 @@ fn main() {
 
     // waiting for leave message sent out
     postman.join().unwrap();
+    mailbox.join().unwrap();
+    message_render.join().unwrap();
 }
 
 fn default_window() -> CursiveRunnable {
@@ -240,7 +277,7 @@ fn run(
         siv.step();
         if !siv.is_running() {
             let imsg = InternalMessage {
-                code: ControlCode::LeaveGroup,
+                code: ControlCode::EixtServer,
                 msg: String::new(),
             };
             sender.send(imsg).unwrap();

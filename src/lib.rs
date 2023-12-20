@@ -9,6 +9,7 @@ pub enum ControlCode {
     SendMessage,
     JoinGroup,
     LeaveGroup,
+    EixtServer,
     Error,
 }
 

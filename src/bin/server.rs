@@ -79,6 +79,7 @@ impl Server {
         };
         match msg.get_code() {
             ControlCode::Error => self.handle_msg_error(msg, src),
+            ControlCode::EixtServer => self.handle_msg_exit_server(msg, src),
             ControlCode::SendMessage => self.handle_msg_send_message(msg, src),
             ControlCode::JoinGroup => self.handle_msg_join_group(msg, src),
             ControlCode::LeaveGroup => self.handle_msg_leave_group(msg, src),
@@ -87,6 +88,15 @@ impl Server {
 
     fn handle_msg_error(&mut self, _msg: Message, _src: SocketAddr) {
         // simple ignore the message
+    }
+
+    fn handle_msg_exit_server(&mut self, mut msg: Message, src: SocketAddr) {
+        // remove the member from the server
+        // TODO: remove all expire members
+        msg.update_sender_address(src);
+        msg.update_timestamp();
+        self.send_to_all(&msg);
+        self.remove_member(&src);
     }
 
     fn handle_msg_send_message(&mut self, mut msg: Message, src: SocketAddr) {
