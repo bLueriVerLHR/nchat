@@ -68,10 +68,15 @@ impl Server {
     }
 
     fn parse_msg(&mut self, raw: &[u8], src: SocketAddr) {
-        let utf8msg = from_utf8(raw).unwrap();
+        let utf8msg = match from_utf8(raw) {
+            Ok(utf8msg) => utf8msg,
+            Err(_) => return
+        };
         println!("{}", utf8msg);
-
-        let msg: Message = serde_json::from_str(utf8msg).unwrap();
+        let msg: Message = match serde_json::from_str(utf8msg) {
+            Ok(msg) => msg,
+            Err(_) => return
+        };
         match msg.get_code() {
             ControlCode::Error => self.handle_msg_error(msg, src),
             ControlCode::SendMessage => self.handle_msg_send_message(msg, src),
