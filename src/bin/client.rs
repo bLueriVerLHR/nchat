@@ -104,6 +104,49 @@ fn main() {
         }
     });
 
+    // render message in the backgroud
+    let (view_sender, view_receiver) = channel::<TextView>();
+    let _message_render = thread::spawn(move || {
+        for m in mail_receiver.iter() {
+            let sender = m.get_sender();
+            let timestamp = m.get_timestamp();
+            let dt = DateTime::from_timestamp(timestamp, 0).unwrap();
+            let loc_dt = dt.with_timezone(&Local);
+            let msg = m.get_msg();
+            let text = match m.get_code() {
+                ControlCode::Error => {
+                    format!("## server send an error: {}", msg)
+                }
+                ControlCode::JoinGroup => {
+                    format!(
+                        "😊 {}@{} has joined the group -- {}",
+                        sender.get_nickname(),
+                        sender.get_address(),
+                        loc_dt,
+                    )
+                }
+                ControlCode::LeaveGroup => {
+                    format!(
+                        "👋 {}@{} has left the group -- {}",
+                        sender.get_nickname(),
+                        sender.get_address(),
+                        loc_dt,
+                    )
+                }
+                ControlCode::SendMessage => {
+                    format!(
+                        "~> {}@{} -- {} <~\n{}",
+                        sender.get_nickname(),
+                        sender.get_address(),
+                        loc_dt,
+                        msg
+                    )
+                }
+            };
+            view_sender.send(TextView::new(text)).unwrap();
+        }
+    });
+
     // set postman for sending message to server
     let (post_sender, post_receiver) = channel::<InternalMessage>();
     let udp = client.clone_socket();
@@ -129,7 +172,7 @@ fn main() {
     let mut siv = default_window();
     render(&mut siv, client.current_group(), post_sender.clone());
     let mut siv = siv.runner();
-    run(&mut siv, mail_receiver, post_sender);
+    run(&mut siv, view_receiver, post_sender);
 
     // waiting for leave message sent out
     postman.join().unwrap();
@@ -141,6 +184,9 @@ fn default_window() -> CursiveRunnable {
         s.quit();
     });
     siv.add_global_callback(event::Event::CtrlChar('c'), move |s| {
+        s.quit();
+    });
+    siv.add_global_callback(event::Event::CtrlChar('d'), move |s| {
         s.quit();
     });
     siv.add_global_callback(event::Key::Del, |s| {
@@ -185,7 +231,7 @@ fn render(siv: &mut CursiveRunnable, title: &String, sender: Sender<InternalMess
 
 fn run(
     siv: &mut CursiveRunner<&mut Cursive>,
-    receiver: Receiver<Message>,
+    receiver: Receiver<TextView>,
     sender: Sender<InternalMessage>,
 ) {
     let mut msg_cnt: u64 = 0;
@@ -202,46 +248,11 @@ fn run(
         }
 
         let mut needs_refresh = false;
-        for m in receiver.try_iter() {
-            let sender = m.get_sender();
-            let timestamp = m.get_timestamp();
-            let dt = DateTime::from_timestamp(timestamp, 0).unwrap();
-            let loc_dt = dt.with_timezone(&Local);
-            let msg = m.get_msg();
-            let text = match m.get_code() {
-                ControlCode::Error => {
-                    format!("## server send an error: {}", msg)
-                }
-                ControlCode::JoinGroup => {
-                    format!(
-                        "😊 {}@{} has joined the group -- {}",
-                        sender.get_nickname(),
-                        sender.get_address(),
-                        loc_dt,
-                    )
-                }
-                ControlCode::LeaveGroup => {
-                    format!(
-                        "👋 {}@{} has left the group -- {}",
-                        sender.get_nickname(),
-                        sender.get_address(),
-                        loc_dt,
-                    )
-                }
-                ControlCode::SendMessage => {
-                    format!(
-                        "~> {}@{} -- {} <~\n{}",
-                        sender.get_nickname(),
-                        sender.get_address(),
-                        loc_dt,
-                        msg
-                    )
-                }
-            };
-            siv.call_on_name("chat.history", |v: &mut LinearLayout| {
-                needs_refresh = true;
-                msg_cnt += 1;
-                v.add_child(TextView::new(text));
+        for text_view in receiver.try_iter() {
+            needs_refresh = true;
+            msg_cnt += 1;
+            siv.call_on_name("chat.history", move |v: &mut LinearLayout| {
+                v.add_child(text_view);
             });
         }
 
@@ -249,4 +260,5 @@ fn run(
             siv.refresh();
         }
     }
+    println!("receive {} messages in this session", msg_cnt);
 }
