@@ -72,7 +72,7 @@ impl Server {
             Ok(utf8msg) => utf8msg,
             Err(_) => return
         };
-        println!("{}", utf8msg);
+        println!("[{}]{}", src, utf8msg);
         let msg: Message = match serde_json::from_str(utf8msg) {
             Ok(msg) => msg,
             Err(_) => return
