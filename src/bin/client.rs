@@ -47,7 +47,7 @@ struct Client {
 
 impl Client {
     pub fn new(nickname: String, address: SocketAddr, server: SocketAddr) -> Client {
-        let socket = UdpSocket::bind(&address).unwrap();
+        let socket = UdpSocket::bind(address).unwrap();
         socket.connect(server).unwrap();
         Client {
             nickname,
@@ -76,15 +76,15 @@ impl Client {
         Member::new(self.nickname.clone(), self.socket.local_addr().unwrap())
     }
 
-    fn try_login(&mut self, group: &String) {
+    fn try_login(&mut self, group: &str) {
         let g = self.get_group();
         let m = self.get_member();
-        let msg = Message::new_default(ControlCode::JoinGroup, g, m, group.clone());
+        let msg = Message::new_default(ControlCode::JoinGroup, g, m, group.to_owned());
         let buf = serde_json::to_string(&msg).unwrap();
         self.socket
             .send(buf.as_bytes())
             .expect("login info send failed");
-        self.group = group.clone();
+        self.group = group.to_owned();
     }
 }
 
@@ -104,15 +104,9 @@ fn main() {
             continue;
         } else {
             let raw = from_utf8(&buf[..recv.unwrap()]).unwrap();
-            let msg: Message = serde_json::from_str(&raw).unwrap();
+            let msg: Message = serde_json::from_str(raw).unwrap();
             let exit_server = match msg.get_code() {
-                ControlCode::EixtServer => {
-                    if msg.get_sender().get_address() == &addr {
-                        true
-                    } else {
-                        false
-                    }
-                }
+                ControlCode::EixtServer => msg.get_sender().get_address() == &addr,
                 _ => false,
             };
             mail_sender.send(msg).unwrap();
@@ -171,13 +165,8 @@ fn main() {
             };
             view_sender.send(TextView::new(text)).unwrap();
 
-            match m.get_code() {
-                ControlCode::EixtServer => {
-                    if m.get_sender().get_address() == &addr {
-                        break;
-                    }
-                }
-                _ => {}
+            if m.get_code() == &ControlCode::EixtServer && m.get_sender().get_address() == &addr {
+                break;
             }
         }
     });
@@ -195,11 +184,8 @@ fn main() {
             let buf = serde_json::to_string(&default).unwrap();
             udp.send(buf.as_bytes()).unwrap();
 
-            match default.get_code() {
-                ControlCode::EixtServer => {
-                    break;
-                }
-                _ => {}
+            if default.get_code() == &ControlCode::EixtServer {
+                break;
             }
         }
     });
@@ -238,7 +224,7 @@ fn default_window() -> CursiveRunnable {
         })
         .unwrap();
     });
-    return siv;
+    siv
 }
 
 fn render(siv: &mut CursiveRunnable, title: &String, sender: Sender<InternalMessage>) {

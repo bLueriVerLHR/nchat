@@ -44,7 +44,7 @@ impl Server {
     }
 
     fn remove_member(&mut self, addr: &SocketAddr) -> bool {
-        self.members.remove(&addr)
+        self.members.remove(addr)
     }
 
     fn send_to_all(&mut self, msg: &Message) {
