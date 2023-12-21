@@ -108,8 +108,8 @@ impl Server {
 
     fn handle_msg_join_group(&mut self, mut msg: Message, src: SocketAddr) {
         // add the new member to the server
-        if !self.group_exist(msg.get_msg()) {
-            msg.set_msg(format!("group {} not exist", msg.get_msg()));
+        if !self.group_exist(msg.get_message()) {
+            msg.set_message(format!("group {} not exist", msg.get_message()));
             msg.set_code(ControlCode::Error);
             msg.update_timestamp();
             self.send_to(&msg, &src);
@@ -124,10 +124,10 @@ impl Server {
     fn handle_msg_leave_group(&mut self, mut msg: Message, src: SocketAddr) {
         // remove the member from the server
         // TODO: remove all expire members
-        self.remove_member(&src);
         msg.update_sender_address(src);
         msg.update_timestamp();
         self.send_to_all(&msg);
+        self.remove_member(&src);
     }
 }
 
