@@ -15,6 +15,19 @@ use cursive::{
 };
 use nchat::{ControlCode, Group, Member, Message};
 
+#[derive(Clone)]
+enum ClientCode {
+    SendMessage,
+    ReceiveMessage,
+    ClientShutdown,
+}
+
+#[derive(Clone)]
+struct InternalMessage {
+    code: ClientCode,
+    msg: String,
+}
+
 #[derive(Parser, Debug)]
 pub struct Args {
     /// client will use <ADDRESS> for udp send/receive
@@ -34,9 +47,18 @@ pub struct Args {
     nickname: String,
 }
 
-struct InternalMessage {
-    code: ControlCode,
-    msg: String,
+impl InternalMessage {
+    pub fn new(code: ClientCode, msg: String) -> InternalMessage {
+        InternalMessage { code, msg }
+    }
+
+    pub fn get_code(&self) -> &ClientCode {
+        &self.code
+    }
+
+    pub fn get_message(&self) -> &String {
+        &self.msg
+    }
 }
 
 struct Client {
@@ -46,9 +68,7 @@ struct Client {
 }
 
 impl Client {
-    pub fn new(nickname: String, address: SocketAddr, server: SocketAddr) -> Client {
-        let socket = UdpSocket::bind(&address).unwrap();
-        socket.connect(server).unwrap();
+    pub fn new(nickname: String, socket: UdpSocket) -> Client {
         Client {
             nickname,
             group: String::new(),
@@ -62,10 +82,6 @@ impl Client {
 
     pub fn current_group(&self) -> &String {
         &self.group
-    }
-
-    pub fn get_address(&self) -> SocketAddr {
-        self.socket.local_addr().unwrap()
     }
 
     pub fn get_group(&self) -> Group {
@@ -90,129 +106,45 @@ impl Client {
 
 fn main() {
     let args = Args::parse();
-    let mut client = Client::new(args.nickname, args.address, args.server);
+    let socket = UdpSocket::bind(args.address).unwrap();
+    socket.connect(args.server).unwrap();
+    let mut client = Client::new(args.nickname, socket);
     client.try_login(&args.group);
 
     // set mailbox for receiving message from server
     let (mail_sender, mail_receiver) = channel();
-    let udp = client.clone_socket();
-    let addr = client.get_address();
-    let mailbox = thread::spawn(move || loop {
+    let socket = client.clone_socket();
+    let boxmail_sender = mail_sender.clone();
+    let _mailbox = thread::spawn(move || {
         let mut buf = [0; 4096];
-        let recv = udp.recv(&mut buf);
-        if recv.is_err() {
-            continue;
-        } else {
-            let raw = from_utf8(&buf[..recv.unwrap()]).unwrap();
-            let msg: Message = serde_json::from_str(&raw).unwrap();
-            let exit_server = match msg.get_code() {
-                ControlCode::EixtServer => {
-                    if msg.get_sender().get_address() == &addr {
-                        true
-                    } else {
-                        false
-                    }
-                }
-                _ => false,
-            };
-            mail_sender.send(msg).unwrap();
-            if exit_server {
-                break;
-            }
+        loop {
+            forward_udp(&mut buf, &socket, &boxmail_sender);
         }
     });
 
     // render message in the backgroud
     let (view_sender, view_receiver) = channel::<TextView>();
-    let message_render = thread::spawn(move || {
-        for m in mail_receiver.iter() {
-            let sender = m.get_sender();
-            let timestamp = m.get_timestamp();
-            let dt = DateTime::from_timestamp(timestamp, 0).unwrap();
-            let loc_dt = dt.with_timezone(&Local);
-            let msg = m.get_msg();
-            let text = match m.get_code() {
-                ControlCode::Error => {
-                    format!("## server send an error: {}", msg)
-                }
-                ControlCode::EixtServer => {
-                    format!(
-                        "👋 {}@{} has exit the server -- {}",
-                        sender.get_nickname(),
-                        sender.get_address(),
-                        loc_dt,
-                    )
-                }
-                ControlCode::JoinGroup => {
-                    format!(
-                        "😊 {}@{} has joined the group -- {}",
-                        sender.get_nickname(),
-                        sender.get_address(),
-                        loc_dt,
-                    )
-                }
-                ControlCode::LeaveGroup => {
-                    format!(
-                        "👋 {}@{} has left the group -- {}",
-                        sender.get_nickname(),
-                        sender.get_address(),
-                        loc_dt,
-                    )
-                }
-                ControlCode::SendMessage => {
-                    format!(
-                        "~> {}@{} -- {} <~\n{}",
-                        sender.get_nickname(),
-                        sender.get_address(),
-                        loc_dt,
-                        msg
-                    )
-                }
-            };
-            view_sender.send(TextView::new(text)).unwrap();
-
-            match m.get_code() {
-                ControlCode::EixtServer => {
-                    if m.get_sender().get_address() == &addr {
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
+    let prerender = thread::spawn(move || {
+        forward_prerender(&mail_receiver, &view_sender);
     });
 
     // set postman for sending message to server
     let (post_sender, post_receiver) = channel::<InternalMessage>();
-    let udp = client.clone_socket();
+    let socket = client.clone_socket();
     let m = client.get_member();
     let g = client.get_group();
     let postman = thread::spawn(move || {
-        let mut default = Message::new_default(ControlCode::SendMessage, g, m, String::new());
-        for imsg in post_receiver.iter() {
-            default.set_code(imsg.code);
-            default.set_msg(imsg.msg);
-            let buf = serde_json::to_string(&default).unwrap();
-            udp.send(buf.as_bytes()).unwrap();
-
-            match default.get_code() {
-                ControlCode::EixtServer => {
-                    break;
-                }
-                _ => {}
-            }
-        }
+        forward_client_message(&post_receiver, &m, &g, &socket);
     });
 
     let mut siv = default_window();
     render(&mut siv, client.current_group(), post_sender.clone());
     let mut siv = siv.runner();
-    run(&mut siv, view_receiver, post_sender);
+    run(&mut siv, view_receiver, vec![mail_sender, post_sender]);
 
     // waiting for leave message sent out
+    prerender.join().unwrap();
     postman.join().unwrap();
-    mailbox.join().unwrap();
-    message_render.join().unwrap();
 }
 
 fn default_window() -> CursiveRunnable {
@@ -250,10 +182,7 @@ fn render(siv: &mut CursiveRunnable, title: &String, sender: Sender<InternalMess
 
     let editor = EditView::new()
         .on_submit(move |_s, text| {
-            let imsg = InternalMessage {
-                code: ControlCode::SendMessage,
-                msg: text.to_string(),
-            };
+            let imsg = InternalMessage::new(ClientCode::SendMessage, text.to_string());
             sender.send(imsg).unwrap();
         })
         .with_name("chat.edit")
@@ -269,18 +198,18 @@ fn render(siv: &mut CursiveRunnable, title: &String, sender: Sender<InternalMess
 fn run(
     siv: &mut CursiveRunner<&mut Cursive>,
     receiver: Receiver<TextView>,
-    sender: Sender<InternalMessage>,
+    senders: Vec<Sender<InternalMessage>>,
 ) {
     let mut msg_cnt: u64 = 0;
     siv.refresh();
     loop {
         siv.step();
         if !siv.is_running() {
-            let imsg = InternalMessage {
-                code: ControlCode::EixtServer,
-                msg: String::new(),
-            };
-            sender.send(imsg).unwrap();
+            // broadcast the shutdown message
+            let imsg = InternalMessage::new(ClientCode::ClientShutdown, String::new());
+            for sender in senders.iter() {
+                sender.send(imsg.clone()).unwrap();
+            }
             break;
         }
 
@@ -298,4 +227,145 @@ fn run(
         }
     }
     println!("receive {} messages in this session", msg_cnt);
+}
+
+fn forward_udp(buf: &mut [u8], socket: &UdpSocket, sender: &Sender<InternalMessage>) {
+    loop {
+        let len = match socket.recv(buf) {
+            Ok(len) => len,
+            Err(err) => {
+                println!("{}", err.to_string());
+                continue;
+            }
+        };
+        let raw = match from_utf8(&buf[..len]) {
+            Ok(utf8str) => utf8str,
+            Err(err) => {
+                println!("{}", err.to_string());
+                continue;
+            }
+        };
+        let imsg = InternalMessage::new(ClientCode::ReceiveMessage, raw.to_string());
+        match sender.send(imsg) {
+            Ok(()) => {
+                break;
+            }
+            Err(err) => {
+                println!("{}", err.to_string());
+                continue;
+            }
+        };
+    }
+}
+
+fn forward_prerender(receiver: &Receiver<InternalMessage>, sender: &Sender<TextView>) {
+    for imsg in receiver.iter() {
+        let m: Message = match imsg.code {
+            ClientCode::ReceiveMessage => match serde_json::from_str(imsg.get_message()) {
+                Ok(msg) => msg,
+                Err(err) => {
+                    println!("{}", err.to_string());
+                    continue;
+                }
+            },
+            ClientCode::ClientShutdown => {
+                break;
+            }
+            _ => {
+                println!("unexpected message received");
+                continue;
+            }
+        };
+        match message_prerender(m) {
+            Some(m) => sender.send(TextView::new(m)).unwrap(),
+            None => continue,
+        }
+    }
+}
+
+fn forward_client_message(
+    receiver: &Receiver<InternalMessage>,
+    member: &Member,
+    group: &Group,
+    socket: &UdpSocket,
+) {
+    let mut default = Message::new_default(
+        ControlCode::SendMessage,
+        group.clone(),
+        member.clone(),
+        String::new(),
+    );
+    for imsg in receiver.iter() {
+        match imsg.get_code() {
+            ClientCode::ClientShutdown => default.set_code(ControlCode::EixtServer),
+            ClientCode::SendMessage => default.set_code(ControlCode::SendMessage),
+            _ => {
+                continue;
+            }
+        }
+        default.set_message(imsg.get_message().clone());
+        let buf = serde_json::to_string(&default).unwrap();
+        socket.send(buf.as_bytes()).unwrap();
+
+        match imsg.get_code() {
+            ClientCode::ClientShutdown => {
+                break;
+            }
+            _ => {}
+        }
+    }
+}
+
+fn message_prerender(m: Message) -> Option<String> {
+    let from = m.get_sender();
+    let timestamp = m.get_timestamp();
+    let msg = m.get_message();
+    let code = m.get_code();
+    let datetime = match DateTime::from_timestamp(timestamp, 0) {
+        Some(ts) => ts,
+        None => {
+            println!("timestamp convert failed");
+            return None;
+        }
+    };
+    let local_datetime = datetime.with_timezone(&Local);
+    let text = match code {
+        ControlCode::Error => {
+            format!("## server send an error: {}", msg)
+        }
+        ControlCode::EixtServer => {
+            format!(
+                "👋 {}@{} has exit the server -- {}",
+                from.get_nickname(),
+                from.get_address(),
+                local_datetime,
+            )
+        }
+        ControlCode::JoinGroup => {
+            format!(
+                "😊 {}@{} has joined the group -- {}",
+                from.get_nickname(),
+                from.get_address(),
+                local_datetime,
+            )
+        }
+        ControlCode::LeaveGroup => {
+            format!(
+                "👋 {}@{} has left the group -- {}",
+                from.get_nickname(),
+                from.get_address(),
+                local_datetime,
+            )
+        }
+        ControlCode::SendMessage => {
+            format!(
+                "~> {}@{} -- {} <~\n{}",
+                from.get_nickname(),
+                from.get_address(),
+                local_datetime,
+                msg
+            )
+        }
+    };
+    return Some(text);
 }

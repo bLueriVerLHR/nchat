@@ -125,11 +125,11 @@ impl Message {
         &self.code
     }
 
-    pub fn set_msg(&mut self, msg: String) {
+    pub fn set_message(&mut self, msg: String) {
         self.msg = msg;
     }
 
-    pub fn get_msg(&self) -> &String {
+    pub fn get_message(&self) -> &String {
         &self.msg
     }
 
