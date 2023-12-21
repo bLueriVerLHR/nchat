@@ -234,24 +234,24 @@ fn forward_udp(buf: &mut [u8], socket: &UdpSocket, sender: &Sender<InternalMessa
             Ok(len) => len,
             Err(err) => {
                 // bad but sometime useful exit
-                println!("{}", err.to_string());
+                println!("{}", err);
                 return false;
             }
         };
         let raw = match from_utf8(&buf[..len]) {
             Ok(utf8str) => utf8str,
             Err(err) => {
-                println!("{}", err.to_string());
+                println!("{}", err);
                 continue;
             }
         };
         let imsg = InternalMessage::new(ClientCode::ReceiveMessage, raw.to_string());
         match sender.send(imsg) {
             Ok(()) => {
-                let msg: Message = match serde_json::from_str(&raw) {
+                let msg: Message = match serde_json::from_str(raw) {
                     Ok(msg) => msg,
                     Err(err) => {
-                        println!("{}", err.to_string());
+                        println!("{}", err);
                         continue;
                     }
                 };
@@ -262,7 +262,7 @@ fn forward_udp(buf: &mut [u8], socket: &UdpSocket, sender: &Sender<InternalMessa
             }
             Err(err) => {
                 // bad but sometime useful exit
-                println!("{}", err.to_string());
+                println!("{}", err);
                 return false;
             }
         };
@@ -275,7 +275,7 @@ fn forward_prerender(receiver: &Receiver<InternalMessage>, sender: &Sender<TextV
             ClientCode::ReceiveMessage => match serde_json::from_str(imsg.get_message()) {
                 Ok(msg) => msg,
                 Err(err) => {
-                    println!("{}", err.to_string());
+                    println!("{}", err);
                     continue;
                 }
             },
@@ -378,5 +378,5 @@ fn message_prerender(m: Message) -> Option<String> {
             )
         }
     };
-    return Some(text);
+    Some(text)
 }
