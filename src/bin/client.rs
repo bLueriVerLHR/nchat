@@ -318,11 +318,8 @@ fn forward_client_message(
         let buf = serde_json::to_string(&default).unwrap();
         socket.send(buf.as_bytes()).unwrap();
 
-        match imsg.get_code() {
-            ClientCode::ClientShutdown => {
-                break;
-            }
-            _ => {}
+        if let ClientCode::ClientShutdown = imsg.get_code() {
+            break;
         }
     }
 }
