@@ -261,8 +261,9 @@ fn forward_udp(buf: &mut [u8], socket: &UdpSocket, sender: &Sender<InternalMessa
                 }
             }
             Err(err) => {
+                // bad but sometime useful exit
                 println!("{}", err.to_string());
-                continue;
+                return false;
             }
         };
     }
