@@ -3,8 +3,7 @@ use std::net::SocketAddr;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone)]
-#[derive(Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum ControlCode {
     SendMessage,
     JoinGroup,
@@ -13,8 +12,7 @@ pub enum ControlCode {
     Error,
 }
 
-#[derive(Clone)]
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Member {
     nickname: String,
     address: SocketAddr,
@@ -42,8 +40,7 @@ impl Member {
     }
 }
 
-#[derive(Clone)]
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Group {
     name: String,
     id: u64,
@@ -71,8 +68,7 @@ impl Group {
     }
 }
 
-#[derive(Clone)]
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Message {
     code: ControlCode,
     timestamp: i64,
@@ -82,7 +78,13 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn new(code: ControlCode, timestamp: i64, group: Group, sender: Member, msg: String) -> Message {
+    pub fn new(
+        code: ControlCode,
+        timestamp: i64,
+        group: Group,
+        sender: Member,
+        msg: String,
+    ) -> Message {
         Message {
             code,
             timestamp,

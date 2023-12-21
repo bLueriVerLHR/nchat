@@ -44,7 +44,7 @@ impl Server {
     }
 
     fn remove_member(&mut self, addr: &SocketAddr) -> bool {
-        self.members.remove(&addr)
+        self.members.remove(addr)
     }
 
     fn send_to_all(&mut self, msg: &Message) {
@@ -70,12 +70,12 @@ impl Server {
     fn parse_msg(&mut self, raw: &[u8], src: SocketAddr) {
         let utf8msg = match from_utf8(raw) {
             Ok(utf8msg) => utf8msg,
-            Err(_) => return
+            Err(_) => return,
         };
         println!("[{}]{}", src, utf8msg);
         let msg: Message = match serde_json::from_str(utf8msg) {
             Ok(msg) => msg,
-            Err(_) => return
+            Err(_) => return,
         };
         match msg.get_code() {
             ControlCode::Error => self.handle_msg_error(msg, src),
