@@ -115,11 +115,9 @@ fn main() {
     let (mail_sender, mail_receiver) = channel();
     let socket = client.clone_socket();
     let boxmail_sender = mail_sender.clone();
-    let _mailbox = thread::spawn(move || {
+    let mailbox = thread::spawn(move || {
         let mut buf = [0; 4096];
-        loop {
-            forward_udp(&mut buf, &socket, &boxmail_sender);
-        }
+        while forward_udp(&mut buf, &socket, &boxmail_sender) {}
     });
 
     // render message in the backgroud
@@ -145,6 +143,7 @@ fn main() {
     // waiting for leave message sent out
     prerender.join().unwrap();
     postman.join().unwrap();
+    mailbox.join().unwrap();
 }
 
 fn default_window() -> CursiveRunnable {
@@ -229,13 +228,14 @@ fn run(
     println!("receive {} messages in this session", msg_cnt);
 }
 
-fn forward_udp(buf: &mut [u8], socket: &UdpSocket, sender: &Sender<InternalMessage>) {
+fn forward_udp(buf: &mut [u8], socket: &UdpSocket, sender: &Sender<InternalMessage>) -> bool {
     loop {
         let len = match socket.recv(buf) {
             Ok(len) => len,
             Err(err) => {
+                // bad but sometime useful exit
                 println!("{}", err.to_string());
-                continue;
+                return false;
             }
         };
         let raw = match from_utf8(&buf[..len]) {
@@ -248,7 +248,17 @@ fn forward_udp(buf: &mut [u8], socket: &UdpSocket, sender: &Sender<InternalMessa
         let imsg = InternalMessage::new(ClientCode::ReceiveMessage, raw.to_string());
         match sender.send(imsg) {
             Ok(()) => {
-                break;
+                let msg: Message = match serde_json::from_str(&raw) {
+                    Ok(msg) => msg,
+                    Err(err) => {
+                        println!("{}", err.to_string());
+                        continue;
+                    }
+                };
+                match msg.get_code() {
+                    ControlCode::EixtServer => return false,
+                    _ => return true,
+                }
             }
             Err(err) => {
                 println!("{}", err.to_string());

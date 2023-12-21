@@ -124,10 +124,10 @@ impl Server {
     fn handle_msg_leave_group(&mut self, mut msg: Message, src: SocketAddr) {
         // remove the member from the server
         // TODO: remove all expire members
-        self.remove_member(&src);
         msg.update_sender_address(src);
         msg.update_timestamp();
         self.send_to_all(&msg);
+        self.remove_member(&src);
     }
 }
 
